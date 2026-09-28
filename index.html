@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visor GIS Argentina - Mapeo de NAF's y Recursos Hídricos</title>
+    <link rel="shortcut icon" href="https://www.argentina.gob.ar/profiles/argentinagobar/themes/argentinagobar/argentinagobar_theme/favicon.ico" type="image/vnd.microsoft.icon">
+    
+    <!-- Hojas de estilo Leaflet, MarkerCluster y Tree Control -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.control.layers.tree@1.1.0/L.Control.Layers.Tree.css" />
+
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif; }
+        #map { height: 100vh; width: 100%; }
+
+        /* Estilos de clústeres por categoría */
+        .cluster-agricultura { background-color: rgba(46, 125, 50, 0.4); }
+        .cluster-agricultura div { background-color: rgba(46, 125, 50, 0.85); color: #fff; font-weight: bold; }
+
+        .cluster-ganaderia { background-color: rgba(230, 81, 0, 0.4); }
+        .cluster-ganaderia div { background-color: rgba(230, 81, 0, 0.85); color: #fff; font-weight: bold; }
+
+        .cluster-otra { background-color: rgba(84, 110, 122, 0.4); }
+        .cluster-otra div { background-color: rgba(84, 110, 122, 0.85); color: #fff; font-weight: bold; }
+
+        /* Estilo CSS para la categoría Pesca (Azul cian/turquesa) */
+        .cluster-pesca { background-color: rgba(0, 131, 143, 0.4); }
+        .cluster-pesca div { background-color: rgba(0, 131, 143, 0.85); color: #fff; font-weight: bold; }
+
+        /* Paneles de control flotantes lateral derecho */
+        .leaflet-control-layers-tree {
+            padding: 10px 14px;
+            background: white;
+            box-shadow: 0 0 12px rgba(0,0,0,0.25);
+            border-radius: 6px;
+            max-height: 40vh;
+            overflow-y: auto;
+            margin-bottom: 10px !important;
+        }
+
+        .menu-titulo-control {
+            font-size: 13px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 6px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #dcdcdc;
+        }
+
+        .leaflet-control-layers-tree .leaflet-layer-node {
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        /* Etiquetas fijas/hover para ríos */
+        .etiqueta-rio {
+            background: rgba(255, 255, 255, 0.85);
+            border: 1px solid #0288d1;
+            color: #01579b;
+            font-size: 11px;
+            font-weight: bold;
+            padding: 2px 5px;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<!-- Librerías JS necesarias -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://unpkg.com/leaflet.control.layers.tree@1.1.0/L.Control.Layers.Tree.js"></script>
+
+<script>
+    // 1. Inicializar Mapa centrado en Argentina
+    const map = L.map('map').setView([-38.416097, -63.616672], 5);
+
+    // 2. Capa base de MapTiles API
+    L.tileLayer('https://maptiles.p.rapidapi.com/es/map/v1/{z}/{x}/{y}.png?rapidapi-key=0501f3f404msh0d6c6801fc089a8p1bbb94jsn87f86fde6155', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="http://www.maptilesapi.com/">MapTiles API</a>, &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    const configCategorias = {
+        'Agricultura': 'cluster-agricultura',
+        'Ganaderia':   'cluster-ganaderia',
+        'Otra':        'cluster-otra'
+    };
+
+    function crearGrupoCluster(claseCss) {
+        return L.markerClusterGroup({
+            chunkedLoading: true,
+            iconCreateFunction: function(cluster) {
+                const count = cluster.getChildCount();
+                return new L.DivIcon({
+                    html: `<div><span>${count}</span></div>`,
+                    className: `marker-cluster ${claseCss}`,
+                    iconSize: new L.Point(40, 40)
+                });
+            }
+        });
+    }
+
+    // 3. Capa GeoJSON Recursos Hídricos
+    const capaHidrica = L.geoJSON(null, {
+        style: function() {
+            return { color: "#0288d1", weight: 2, opacity: 0.8 };
+        },
+        onEachFeature: function(feature, layer) {
+            if (feature.properties) {
+                const nombreCauce = feature.properties.fna || feature.properties.NOMBRE || feature.properties.nombre;
+                if (nombreCauce) {
+                    layer.bindTooltip(nombreCauce, {
+                        permanent: false,
+                        direction: 'center',
+                        className: 'etiqueta-rio',
+                        sticky: true
+                    });
+                    layer.bindPopup(`<b>Recurso Hídrico:</b> ${nombreCauce}`);
+                }
+            }
+        }
+    });
+
+    fetch('recursos_hidricos.json')
+        .then(res => res.json())
+        .then(geoData => capaHidrica.addData(geoData))
+        .catch(err => console.error('Error cargando recursos_hidricos.json:', err));
+
+    // --- CONTROL 1: Panel "- Control de Capas" ---
+    const arbolCapas = { label: "Recursos Hídricos", layer: capaHidrica };
+
+    const treeControlCapas = L.control.layers.tree(null, arbolCapas, {
+        namedToggle: false,
+        collapseAll: false,
+        expandAll: false,
+        collapsed: false,
+        position: 'topright'
+    }).addTo(map);
+
+    const containerCapas = treeControlCapas.getContainer();
+    if (containerCapas) {
+        const tituloDiv = document.createElement('div');
+        tituloDiv.className = 'menu-titulo-control';
+        tituloDiv.innerText = "- Control de Capas";
+        containerCapas.insertBefore(tituloDiv, containerCapas.firstChild);
+    }
+
+    // --- CONTROL 2: Panel "- Info ReNAF" (Carga datos optimizados) ---
+    const capasPorSubCategoria = {};
+    const capasPescaPorProvincia = {};
+
+    fetch('datos_puntos.json')
+        .then(res => res.json())
+        .then(respuesta => {
+            // Mapeo dinámico de índices de columnas
+            const cols = {};
+            respuesta.columnas.forEach((nombre, index) => {
+                cols[nombre] = index;
+            });
+
+            respuesta.filas.forEach(fila => {
+                const lat = parseFloat(fila[cols['lat']]);
+                const lng = parseFloat(fila[cols['lng']]);
+                if (isNaN(lat) || isNaN(lng) || lat === 0 || lng === 0) return;
+
+                const act = fila[cols['Actividad']] ? String(fila[cols['Actividad']]).trim() : '';
+                const prov = fila[cols['provincia']] ? String(fila[cols['provincia']]).trim() : 'Sin Provincia';
+                const pescaVal = fila[cols['porcentaje_pesca']];
+
+                function crearMarcadorPunto() {
+                    const marker = L.marker([lat, lng]);
+                    const contenidoPopup = `
+                        <div style="font-family: Arial; font-size: 13px; line-height: 1.4;">
+                            <h4 style="margin:0 0 5px 0; color:#2c3e50;">RLM: ${fila[cols['rlm']] || 'N/A'}</h4>
+                            <b>Región:</b> ${fila[cols['region']] || '-'}<br>
+                            <b>Provincia:</b> ${fila[cols['provincia']] || '-'}<br>
+                            <b>Fecha Alta:</b> ${fila[cols['fecha_alta']] || '-'}<br>
+                            <b>Actividad:</b> ${fila[cols['Actividad']] || '-'}<br>
+                            <b>Descripción:</b> ${fila[cols['Actividad_descrip']] || 'Sin descripción'}
+                        </div>
+                    `;
+                    marker.bindPopup(contenidoPopup);
+                    return marker;
+                }
+
+                // A. Agrupar en Categorías de "Mapeo de NAF's"
+                if (configCategorias.hasOwnProperty(act)) {
+                    if (!capasPorSubCategoria[act]) capasPorSubCategoria[act] = {};
+                    if (!capasPorSubCategoria[act][prov]) {
+                        capasPorSubCategoria[act][prov] = crearGrupoCluster(configCategorias[act]);
+                        map.addLayer(capasPorSubCategoria[act][prov]);
+                    }
+                    capasPorSubCategoria[act][prov].addLayer(crearMarcadorPunto());
+                }
+
+                // B. Agrupar en Categoría "Pesca"
+                const tienePesca = pescaVal !== null && 
+                                   pescaVal !== undefined && 
+                                   String(pescaVal).trim() !== '' && 
+                                   String(pescaVal).trim() !== '0';
+
+                if (tienePesca) {
+                    if (!capasPescaPorProvincia[prov]) {
+                        capasPescaPorProvincia[prov] = crearGrupoCluster('cluster-pesca');
+                        map.addLayer(capasPescaPorProvincia[prov]);
+                    }
+                    capasPescaPorProvincia[prov].addLayer(crearMarcadorPunto());
+                }
+            });
+
+            // Arbol para "Mapeo de NAF's"
+            const ramasCategorias = [];
+            Object.keys(configCategorias).forEach(act => {
+                if (capasPorSubCategoria[act]) {
+                    const ramaActividad = {
+                        label: `<b>${act}</b>`,
+                        selectAllCheckbox: 'Desactivar/Activar categoría',
+                        collapsed: true,
+                        children: []
+                    };
+                    Object.keys(capasPorSubCategoria[act]).sort().forEach(prov => {
+                        ramaActividad.children.push({
+                            label: prov,
+                            layer: capasPorSubCategoria[act][prov]
+                        });
+                    });
+                    ramasCategorias.push(ramaActividad);
+                }
+            });
+
+            // Arbol para "Pesca"
+            const hijosPesca = [];
+            Object.keys(capasPescaPorProvincia).sort().forEach(prov => {
+                hijosPesca.push({
+                    label: prov,
+                    layer: capasPescaPorProvincia[prov]
+                });
+            });
+
+            // Estructura completa del árbol para "- Info ReNAF"
+            const arbolNafs = {
+                children: [
+                    {
+                        label: "<b>Mapeo de NAF's</b>",
+                        selectAllCheckbox: 'Desactivar/Activar NAFs',
+                        collapsed: false,
+                        children: ramasCategorias
+                    },
+                    {
+                        label: "<b>Pesca</b>",
+                        selectAllCheckbox: 'Desactivar/Activar Pesca',
+                        collapsed: true,
+                        children: hijosPesca
+                    }
+                ]
+            };
+
+            const treeControlNafs = L.control.layers.tree(null, arbolNafs, {
+                namedToggle: false,
+                collapseAll: false,
+                expandAll: false,
+                collapsed: false,
+                position: 'topright'
+            }).addTo(map);
+
+            // Agregar título "- Info ReNAF" y posicionar arriba
+            const containerNafs = treeControlNafs.getContainer();
+            if (containerNafs) {
+                const tituloDiv = document.createElement('div');
+                tituloDiv.className = 'menu-titulo-control';
+                tituloDiv.innerText = "- Info ReNAF";
+                containerNafs.insertBefore(tituloDiv, containerNafs.firstChild);
+
+                if (containerCapas && containerCapas.parentNode) {
+                    containerCapas.parentNode.insertBefore(containerNafs, containerCapas);
+                }
+            }
+        })
+        .catch(err => console.error('Error al cargar datos_puntos.json:', err));
+</script>
+</body>
+</html>
