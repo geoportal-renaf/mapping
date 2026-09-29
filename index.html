@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visor GIS Argentina - Mapeo de NAF's y Recursos Hídricos</title>
+    <link rel="shortcut icon" href="https://www.argentina.gob.ar/profiles/argentinagobar/themes/argentinagobar/argentinagobar_theme/favicon.ico" type="image/vnd.microsoft.icon">
+    
+    <!-- Hojas de estilo Leaflet, MarkerCluster y Tree Control -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.control.layers.tree@1.1.0/L.Control.Layers.Tree.css" />
+
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif; }
+        #map { height: 100vh; width: 100%; }
+
+        /* Estilos de clústeres - Mapeo de NAF's */
+        .cluster-agricultura { background-color: rgba(46, 125, 50, 0.4); }
+        .cluster-agricultura div { background-color: rgba(46, 125, 50, 0.85); color: #fff; font-weight: bold; }
+
+        .cluster-ganaderia { background-color: rgba(230, 81, 0, 0.4); }
+        .cluster-ganaderia div { background-color: rgba(230, 81, 0, 0.85); color: #fff; font-weight: bold; }
+
+        .cluster-otra { background-color: rgba(84, 110, 122, 0.4); }
+        .cluster-otra div { background-color: rgba(84, 110, 122, 0.85); color: #fff; font-weight: bold; }
+
+        /* Estilos CSS para capas adicionales */
+        .cluster-pesca { background-color: rgba(0, 131, 143, 0.4); }
+        .cluster-pesca div { background-color: rgba(0, 131, 143, 0.85); color: #fff; font-weight: bold; }
+
+        .cluster-turismo { background-color: rgba(156, 39, 176, 0.4); }
+        .cluster-turismo div { background-color: rgba(156, 39, 176, 0.85); color: #fff; font-weight: bold; }
+
+        .cluster-caza { background-color: rgba(121, 85, 72, 0.4); }
+        .cluster-caza div { background-color: rgba(121, 85, 72, 0.85); color: #fff; font-weight: bold; }
+
+        .cluster-artesanias { background-color: rgba(233, 30, 99, 0.4); }
+        .cluster-artesanias div { background-color: rgba(233, 30, 99, 0.85); color: #fff; font-weight: bold; }
+
+        .cluster-agroindustria { background-color: rgba(255, 193, 7, 0.4); }
+        .cluster-agroindustria div { background-color: rgba(255, 193, 7, 0.85); color: #fff; font-weight: bold; }
+
+        /* Paneles de control flotantes */
+        .leaflet-control-layers-tree {
+            padding: 10px 14px;
+            background: white;
+            box-shadow: 0 0 12px rgba(0,0,0,0.25);
+            border-radius: 6px;
+            max-height: 40vh;
+            overflow-y: auto;
+            margin-bottom: 10px !important;
+        }
+
+        .menu-titulo-control {
+            font-size: 13px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 6px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #dcdcdc;
+        }
+
+        .leaflet-control-layers-tree .leaflet-layer-node {
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .etiqueta-rio {
+            background: rgba(255, 255, 255, 0.85);
+            border: 1px solid #0288d1;
+            color: #01579b;
+            font-size: 11px;
+            font-weight: bold;
+            padding: 2px 5px;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<!-- Librerías JS necesarias -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://unpkg.com/leaflet.control.layers.tree@1.1.0/L.Control.Layers.Tree.js"></script>
+
+<script>
+    // 1. Inicializar Mapa centrado en Argentina
+    const map = L.map('map').setView([-38.416097, -63.616672], 5);
+
+    // 2. Capa base estándar (MapTiles API)
+    L.tileLayer('https://maptiles.p.rapidapi.com/es/map/v1/{z}/{x}/{y}.png?rapidapi-key=0501f3f404msh0d6c6801fc089a8p1bbb94jsn87f86fde6155', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="http://www.maptilesapi.com/">MapTiles API</a>, &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    // 3. Capa Satelital Híbrida (Satélite + División Política)
+    const capaSatelital = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.google.com/maps">Google Maps</a>'
+    });
+
+    const configCategorias = {
+        'Agricultura': 'cluster-agricultura',
+        'Ganaderia':   'cluster-ganaderia',
+        'Otra':        'cluster-otra'
+    };
+
+    function crearGrupoCluster(claseCss) {
+        return L.markerClusterGroup({
+            chunkedLoading: true,
+            iconCreateFunction: function(cluster) {
+                const count = cluster.getChildCount();
+                return new L.DivIcon({
+                    html: `<div><span>${count}</span></div>`,
+                    className: `marker-cluster ${claseCss}`,
+                    iconSize: new L.Point(40, 40)
+                });
+            }
+        });
+    }
+
+    // 4. Capa GeoJSON Recursos Hídricos
+    const capaHidrica = L.geoJSON(null, {
+        style: function() {
+            return { color: "#0288d1", weight: 2, opacity: 0.8 };
+        },
+        onEachFeature: function(feature, layer) {
+            if (feature.properties) {
+                const nombreCauce = feature.properties.fna || feature.properties.NOMBRE || feature.properties.nombre;
+                if (nombreCauce) {
+                    layer.bindTooltip(nombreCauce, {
+                        permanent: false,
+                        direction: 'center',
+                        className: 'etiqueta-rio',
+                        sticky: true
+                    });
+                    layer.bindPopup(`<b>Recurso Hídrico:</b> ${nombreCauce}`);
+                }
+            }
+        }
+    });
+
+    fetch('recursos_hidricos.json')
+        .then(res => res.json())
+        .then(geoData => capaHidrica.addData(geoData))
+        .catch(err => console.error('Error cargando recursos_hidricos.json:', err));
+
+    // --- CONTROL 1: Panel "- Control de Capas" (Recursos Hídricos + Imagen Satelital) ---
+    const arbolCapas = [
+        { label: "Recursos Hídricos", layer: capaHidrica },
+        { label: "Imagen Satelital", layer: capaSatelital }
+    ];
+
+    const treeControlCapas = L.control.layers.tree(null, arbolCapas, {
+        namedToggle: false,
+        collapseAll: false,
+        expandAll: false,
+        collapsed: false,
+        position: 'topright'
+    }).addTo(map);
+
+    const containerCapas = treeControlCapas.getContainer();
+    if (containerCapas) {
+        const tituloDiv = document.createElement('div');
+        tituloDiv.className = 'menu-titulo-control';
+        tituloDiv.innerText = "- Control de Capas";
+        containerCapas.insertBefore(tituloDiv, containerCapas.firstChild);
+    }
+
+    // --- CONTROL 2: Panel "- Info ReNAF" ---
+    const capasPorSubCategoria = {};
+    const capasPescaPorProvincia = {};
+    const capasTurismoPorProvincia = {};
+    const capasCazaPorProvincia = {};
+    const capasArtesaniasPorProvincia = {};
+    const capasAgroindustriaPorProvincia = {};
+
+    fetch('datos_puntos3.json')
+        .then(res => res.json())
+        .then(respuesta => {
+            const cols = {};
+            respuesta.columnas.forEach((nombre, index) => {
+                cols[nombre] = index;
+            });
+
+            function tieneValorValido(val) {
+                return val !== null && 
+                       val !== undefined && 
+                       String(val).trim() !== '' && 
+                       String(val).trim() !== '0';
+            }
+
+            respuesta.filas.forEach(fila => {
+                const lat = parseFloat(fila[cols['lat']]);
+                const lng = parseFloat(fila[cols['lng']]);
+                if (isNaN(lat) || isNaN(lng) || lat === 0 || lng === 0) return;
+
+                const act = fila[cols['Actividad']] ? String(fila[cols['Actividad']]).trim() : '';
+                const prov = fila[cols['provincia']] ? String(fila[cols['provincia']]).trim() : 'Sin Provincia';
+
+                function crearMarcadorPunto() {
+                    const marker = L.marker([lat, lng]);
+                    const contenidoPopup = `
+                        <div style="font-family: Arial; font-size: 13px; line-height: 1.4;">
+                            <h4 style="margin:0 0 5px 0; color:#2c3e50;">RLM: ${fila[cols['rlm']] || 'N/A'}</h4>
+                            <b>Región:</b> ${fila[cols['region']] || '-'}<br>
+                            <b>Provincia:</b> ${fila[cols['provincia']] || '-'}<br>
+                            <b>Fecha Alta:</b> ${fila[cols['fecha_alta']] || '-'}<br>
+                            <b>Actividad:</b> ${fila[cols['Actividad']] || '-'}<br>
+                            <b>Descripción:</b> ${fila[cols['Actividad_descrip']] || 'Sin descripción'}
+                        </div>
+                    `;
+                    marker.bindPopup(contenidoPopup);
+                    return marker;
+                }
+
+                // A. Mapeo de NAF's (Seleccionado al inicio)
+                if (configCategorias.hasOwnProperty(act)) {
+                    if (!capasPorSubCategoria[act]) capasPorSubCategoria[act] = {};
+                    if (!capasPorSubCategoria[act][prov]) {
+                        capasPorSubCategoria[act][prov] = crearGrupoCluster(configCategorias[act]);
+                        map.addLayer(capasPorSubCategoria[act][prov]);
+                    }
+                    capasPorSubCategoria[act][prov].addLayer(crearMarcadorPunto());
+                }
+
+                // B. Pesca
+                if (tieneValorValido(fila[cols['porcentaje_pesca']])) {
+                    if (!capasPescaPorProvincia[prov]) {
+                        capasPescaPorProvincia[prov] = crearGrupoCluster('cluster-pesca');
+                    }
+                    capasPescaPorProvincia[prov].addLayer(crearMarcadorPunto());
+                }
+
+                // C. Turismo
+                if (cols.hasOwnProperty('porcentaje_turismo') && tieneValorValido(fila[cols['porcentaje_turismo']])) {
+                    if (!capasTurismoPorProvincia[prov]) {
+                        capasTurismoPorProvincia[prov] = crearGrupoCluster('cluster-turismo');
+                    }
+                    capasTurismoPorProvincia[prov].addLayer(crearMarcadorPunto());
+                }
+
+                // D. Caza
+                if (cols.hasOwnProperty('porcentaje_caza') && tieneValorValido(fila[cols['porcentaje_caza']])) {
+                    if (!capasCazaPorProvincia[prov]) {
+                        capasCazaPorProvincia[prov] = crearGrupoCluster('cluster-caza');
+                    }
+                    capasCazaPorProvincia[prov].addLayer(crearMarcadorPunto());
+                }
+
+                // E. Artesanías
+                if (cols.hasOwnProperty('porcentaje_artesanias') && tieneValorValido(fila[cols['porcentaje_artesanias']])) {
+                    if (!capasArtesaniasPorProvincia[prov]) {
+                        capasArtesaniasPorProvincia[prov] = crearGrupoCluster('cluster-artesanias');
+                    }
+                    capasArtesaniasPorProvincia[prov].addLayer(crearMarcadorPunto());
+                }
+
+                // F. Agroindustria
+                if (cols.hasOwnProperty('porcentaje_agroindustria') && tieneValorValido(fila[cols['porcentaje_agroindustria']])) {
+                    if (!capasAgroindustriaPorProvincia[prov]) {
+                        capasAgroindustriaPorProvincia[prov] = crearGrupoCluster('cluster-agroindustria');
+                    }
+                    capasAgroindustriaPorProvincia[prov].addLayer(crearMarcadorPunto());
+                }
+            });
+
+            function construirHijosProvincia(objetoCapas) {
+                const hijos = [];
+                Object.keys(objetoCapas).sort().forEach(prov => {
+                    hijos.push({
+                        label: prov,
+                        layer: objetoCapas[prov]
+                    });
+                });
+                return hijos;
+            }
+
+            const ramasCategorias = [];
+            Object.keys(configCategorias).forEach(act => {
+                if (capasPorSubCategoria[act]) {
+                    const ramaActividad = {
+                        label: `<b>${act}</b>`,
+                        selectAllCheckbox: 'Desactivar/Activar categoría',
+                        collapsed: true,
+                        children: construirHijosProvincia(capasPorSubCategoria[act])
+                    };
+                    ramasCategorias.push(ramaActividad);
+                }
+            });
+
+            const arbolNafs = [
+                {
+                    label: "<b>Mapeo de NAF's</b>",
+                    selectAllCheckbox: 'Desactivar/Activar NAFs',
+                    collapsed: false,
+                    children: ramasCategorias
+                },
+                {
+                    label: "<b>Pesca</b>",
+                    selectAllCheckbox: 'Desactivar/Activar Pesca',
+                    collapsed: true,
+                    children: construirHijosProvincia(capasPescaPorProvincia)
+                },
+                {
+                    label: "<b>Turismo</b>",
+                    selectAllCheckbox: 'Desactivar/Activar Turismo',
+                    collapsed: true,
+                    children: construirHijosProvincia(capasTurismoPorProvincia)
+                },
+                {
+                    label: "<b>Caza</b>",
+                    selectAllCheckbox: 'Desactivar/Activar Caza',
+                    collapsed: true,
+                    children: construirHijosProvincia(capasCazaPorProvincia)
+                },
+                {
+                    label: "<b>Artesanías</b>",
+                    selectAllCheckbox: 'Desactivar/Activar Artesanías',
+                    collapsed: true,
+                    children: construirHijosProvincia(capasArtesaniasPorProvincia)
+                },
+                {
+                    label: "<b>Agroindustria</b>",
+                    selectAllCheckbox: 'Desactivar/Activar Agroindustria',
+                    collapsed: true,
+                    children: construirHijosProvincia(capasAgroindustriaPorProvincia)
+                }
+            ];
+
+            const treeControlNafs = L.control.layers.tree(null, arbolNafs, {
+                namedToggle: false,
+                collapseAll: false,
+                expandAll: false,
+                collapsed: false,
+                position: 'topright'
+            }).addTo(map);
+
+            const containerNafs = treeControlNafs.getContainer();
+            if (containerNafs) {
+                const tituloDiv = document.createElement('div');
+                tituloDiv.className = 'menu-titulo-control';
+                tituloDiv.innerText = "- Info ReNAF";
+                containerNafs.insertBefore(tituloDiv, containerNafs.firstChild);
+
+                if (containerCapas && containerCapas.parentNode) {
+                    containerCapas.parentNode.insertBefore(containerNafs, containerCapas);
+                }
+            }
+        })
+        .catch(err => console.error('Error al cargar datos_puntos.json:', err));
+</script>
+</body>
+</html>
